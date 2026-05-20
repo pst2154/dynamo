@@ -29,6 +29,7 @@ def _make_handler() -> _TestWorkerHandler:
         sleep=AsyncMock(),
         wake_up=AsyncMock(),
         resume_generation=AsyncMock(),
+        reset_prefix_cache=AsyncMock(return_value=True),
     )
     handler.generate_endpoint = SimpleNamespace(
         unregister_endpoint_instance=AsyncMock(),
@@ -65,7 +66,9 @@ async def test_sleep_and_wake_are_idempotent():
     assert first_wake["status"] == "ok"
     assert second_wake["status"] == "ok"
 
-    handler.engine_client.pause_generation.assert_awaited_once()
+    handler.engine_client.pause_generation.assert_awaited_once_with(
+        mode="abort", clear_cache=False
+    )
     handler.engine_client.sleep.assert_awaited_once_with(2)
     handler.generate_endpoint.unregister_endpoint_instance.assert_awaited_once()
 
@@ -81,14 +84,72 @@ async def test_quiesce_without_level_uses_vllm_default_sleep():
         sleep=AsyncMock(),
         wake_up=AsyncMock(),
         resume_generation=AsyncMock(),
+        reset_prefix_cache=AsyncMock(return_value=True),
     )
     controller = VllmEngineQuiesceController(engine_client)
 
     changed = await controller.quiesce(None)
 
     assert changed is True
-    engine_client.pause_generation.assert_awaited_once()
+    engine_client.pause_generation.assert_awaited_once_with(
+        mode="abort", clear_cache=False
+    )
+    engine_client.reset_prefix_cache.assert_awaited()
     engine_client.sleep.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_quiesce_drains_pending_kv_transfers_before_sleep(monkeypatch):
+    """When blocks are pinned by in-flight NIXL transfers (reset_prefix_cache
+    returns False), the controller must poll until they drain before invoking
+    sleep(), otherwise vLLM's sleep raises 'Failed to reset KV cache ...
+    running requests waiting for remote KV transfer'."""
+    monkeypatch.setenv("DYN_SLEEP_DRAIN_TIMEOUT_S", "5")
+    # Simulate two pinned probes then drained.
+    reset_prefix_cache = AsyncMock(side_effect=[False, False, True])
+    engine_client = SimpleNamespace(
+        pause_generation=AsyncMock(),
+        sleep=AsyncMock(),
+        wake_up=AsyncMock(),
+        resume_generation=AsyncMock(),
+        reset_prefix_cache=reset_prefix_cache,
+    )
+    controller = VllmEngineQuiesceController(engine_client)
+    # Speed up the poll loop so the test completes quickly.
+    monkeypatch.setattr(
+        VllmEngineQuiesceController, "_DRAIN_POLL_INTERVAL_S", 0.0
+    )
+
+    changed = await controller.quiesce(1)
+
+    assert changed is True
+    assert reset_prefix_cache.await_count == 3
+    engine_client.pause_generation.assert_awaited_once_with(
+        mode="abort", clear_cache=False
+    )
+    engine_client.sleep.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_quiesce_drain_timeout_still_proceeds_to_sleep(monkeypatch):
+    """Drain timeout must not block sleep — surface the upstream error
+    instead of hanging the sleep endpoint."""
+    monkeypatch.setenv("DYN_SLEEP_DRAIN_TIMEOUT_S", "0")
+    reset_prefix_cache = AsyncMock(return_value=False)
+    engine_client = SimpleNamespace(
+        pause_generation=AsyncMock(),
+        sleep=AsyncMock(),
+        wake_up=AsyncMock(),
+        resume_generation=AsyncMock(),
+        reset_prefix_cache=reset_prefix_cache,
+    )
+    controller = VllmEngineQuiesceController(engine_client)
+
+    changed = await controller.quiesce(1)
+
+    assert changed is True
+    assert reset_prefix_cache.await_count == 1
+    engine_client.sleep.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio

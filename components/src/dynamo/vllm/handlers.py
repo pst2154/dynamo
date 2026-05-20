@@ -222,6 +222,12 @@ async def _deferred_abort_guard(
 
 
 class VllmEngineQuiesceController:
+    # Default poll cadence and overall timeout for draining pending NIXL
+    # KV-transfer blocks on the prefill side before invoking sleep(level>=1).
+    # Override timeout via DYN_SLEEP_DRAIN_TIMEOUT_S.
+    _DRAIN_POLL_INTERVAL_S: Final[float] = 0.1
+    _DRAIN_DEFAULT_TIMEOUT_S: Final[float] = 30.0
+
     def __init__(self, engine_client: Any):
         self._engine_client = engine_client
         self._is_quiesced = False
@@ -235,13 +241,79 @@ class VllmEngineQuiesceController:
             return False
 
         level = args[0] if args else None
-        await self._engine_client.pause_generation()
+
+        # Abort in-flight scheduling but leave the prefix cache intact so we
+        # can drain any KV-transfer-pending blocks before sleep() invokes
+        # reset_prefix_cache(reset_running_requests=True). In disaggregated
+        # prefill, the NIXL connector parks finished requests in _reqs_to_send
+        # with a TTL lease until the decode side acks the pull; if sleep()
+        # clears the cache while those blocks are still pinned it raises
+        # "Failed to reset KV cache ... running requests waiting for remote
+        # KV transfer, which is not supported yet" (vLLM scheduler.py).
+        await self._engine_client.pause_generation(mode="abort", clear_cache=False)
+        await self._drain_pending_kv_transfers()
+
         if level is None:
             await self._engine_client.sleep()
         else:
             await self._engine_client.sleep(level)
         self._is_quiesced = True
         return True
+
+    async def _drain_pending_kv_transfers(self) -> None:
+        """Poll until no KV blocks are still pinned by in-flight transfers.
+
+        Uses reset_prefix_cache(reset_running_requests=False) as a probe:
+        when blocks are still pinned, vLLM's block_pool returns False without
+        mutating state. On the success path the block_pool does clear the
+        prefix cache hash table, but that's harmless here because sleep() is
+        about to clear it again via reset_prefix_cache(reset_running_requests=
+        True). Times out after DYN_SLEEP_DRAIN_TIMEOUT_S seconds (default 30s);
+        on timeout we log a warning and let sleep() proceed, which will
+        surface the upstream RuntimeError to the caller rather than hanging
+        the sleep endpoint.
+        """
+        try:
+            timeout_s = float(
+                os.environ.get(
+                    "DYN_SLEEP_DRAIN_TIMEOUT_S", self._DRAIN_DEFAULT_TIMEOUT_S
+                )
+            )
+        except ValueError:
+            timeout_s = self._DRAIN_DEFAULT_TIMEOUT_S
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                freed = await self._engine_client.reset_prefix_cache(
+                    reset_running_requests=False
+                )
+            except Exception as e:
+                logger.warning(
+                    "[Sleep] drain probe failed on attempt %d: %s; proceeding to sleep",
+                    attempts,
+                    e,
+                )
+                return
+            if freed:
+                if attempts > 1:
+                    logger.info(
+                        "[Sleep] drained pending KV transfers after %d probe(s)",
+                        attempts,
+                    )
+                return
+            if loop.time() >= deadline:
+                logger.warning(
+                    "[Sleep] drain timed out after %.1fs (%d probes); in-flight "
+                    "NIXL transfers may still hold blocks — sleep may fail",
+                    timeout_s,
+                    attempts,
+                )
+                return
+            await asyncio.sleep(self._DRAIN_POLL_INTERVAL_S)
 
     async def resume(self, tags: list[str] | None = None) -> bool:
         if not self._is_quiesced:
