@@ -131,9 +131,11 @@ async def test_quiesce_drains_pending_kv_transfers_before_sleep(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_quiesce_drain_timeout_still_proceeds_to_sleep(monkeypatch):
-    """Drain timeout must not block sleep — surface the upstream error
-    instead of hanging the sleep endpoint."""
+async def test_quiesce_drain_timeout_raises_and_skips_sleep(monkeypatch):
+    """On drain timeout the controller must NOT call sleep() -- vLLM would
+    crash with 'Failed to reset KV cache ... running requests waiting for
+    remote KV transfer'. Engine state must remain unpaused so the caller
+    can retry without leaving the engine in a half-quiesced state."""
     monkeypatch.setenv("DYN_SLEEP_DRAIN_TIMEOUT_S", "0")
     reset_prefix_cache = AsyncMock(return_value=False)
     engine_client = SimpleNamespace(
@@ -145,11 +147,12 @@ async def test_quiesce_drain_timeout_still_proceeds_to_sleep(monkeypatch):
     )
     controller = VllmEngineQuiesceController(engine_client)
 
-    changed = await controller.quiesce(1)
+    with pytest.raises(RuntimeError, match="draining pending KV transfers"):
+        await controller.quiesce(1)
 
-    assert changed is True
-    assert reset_prefix_cache.await_count == 1
-    engine_client.sleep.assert_awaited_once_with(1)
+    assert controller.is_quiesced is False
+    engine_client.pause_generation.assert_not_awaited()
+    engine_client.sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio

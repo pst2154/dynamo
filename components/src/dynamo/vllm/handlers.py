@@ -224,9 +224,11 @@ async def _deferred_abort_guard(
 class VllmEngineQuiesceController:
     # Default poll cadence and overall timeout for draining pending NIXL
     # KV-transfer blocks on the prefill side before invoking sleep(level>=1).
-    # Override timeout via DYN_SLEEP_DRAIN_TIMEOUT_S.
+    # NIXL's default kv_lease_duration is 30s; the default below leaves
+    # headroom for one full lease expiry plus in-flight prefill completion.
+    # Override via DYN_SLEEP_DRAIN_TIMEOUT_S.
     _DRAIN_POLL_INTERVAL_S: Final[float] = 0.1
-    _DRAIN_DEFAULT_TIMEOUT_S: Final[float] = 30.0
+    _DRAIN_DEFAULT_TIMEOUT_S: Final[float] = 60.0
 
     def __init__(self, engine_client: Any):
         self._engine_client = engine_client
@@ -242,17 +244,38 @@ class VllmEngineQuiesceController:
 
         level = args[0] if args else None
 
-        # Abort in-flight scheduling but leave the prefix cache intact so we
-        # can drain any KV-transfer-pending blocks before sleep() invokes
-        # reset_prefix_cache(reset_running_requests=True). In disaggregated
-        # prefill, the NIXL connector parks finished requests in _reqs_to_send
-        # with a TTL lease until the decode side acks the pull; if sleep()
-        # clears the cache while those blocks are still pinned it raises
+        # Drain pending KV-transfer blocks BEFORE pausing the scheduler.
+        # vLLM's NIXL connector parks previously-finished prefill requests
+        # in worker._reqs_to_send with a TTL lease (default 30s) and only
+        # releases them inside scheduler.step() -> connector.get_finished(),
+        # which processes both decode-side consumer notifications and lease
+        # expiry. If we pause first, step() stops running and those blocks
+        # can never be released, so sleep()'s internal
+        # reset_prefix_cache(reset_running_requests=True) raises:
         # "Failed to reset KV cache ... running requests waiting for remote
         # KV transfer, which is not supported yet" (vLLM scheduler.py).
-        await self._engine_client.pause_generation(mode="abort", clear_cache=False)
-        await self._drain_pending_kv_transfers()
+        #
+        # The sleep handler unregisters this endpoint from discovery before
+        # calling quiesce(), so no new traffic arrives while we drain.
+        drained = await self._drain_pending_kv_transfers()
+        if not drained:
+            # Refuse to call sleep() -- it would crash the engine with the
+            # upstream RuntimeError above. Surface a clear error so the
+            # caller can retry, raise the timeout, or investigate stuck
+            # decode-side pulls. Engine state is unchanged (no pause issued).
+            raise RuntimeError(
+                "Timed out draining pending KV transfers before sleep. "
+                "Some prefill KV blocks are still pinned awaiting decode-side "
+                "NIXL pull. Increase DYN_SLEEP_DRAIN_TIMEOUT_S, ensure decode "
+                "workers are still pulling, or wait for the NIXL lease to "
+                "expire before retrying sleep."
+            )
 
+        # Drain succeeded -- safe to pause and sleep. clear_cache=False on
+        # pause_generation is cosmetic (sleep() clears the cache itself for
+        # level>=1) but documents that the drain step above is solely
+        # responsible for releasing blocks.
+        await self._engine_client.pause_generation(mode="abort", clear_cache=False)
         if level is None:
             await self._engine_client.sleep()
         else:
@@ -260,18 +283,24 @@ class VllmEngineQuiesceController:
         self._is_quiesced = True
         return True
 
-    async def _drain_pending_kv_transfers(self) -> None:
-        """Poll until no KV blocks are still pinned by in-flight transfers.
+    async def _drain_pending_kv_transfers(self) -> bool:
+        """Poll until no KV blocks are pinned by in-flight transfers.
 
-        Uses reset_prefix_cache(reset_running_requests=False) as a probe:
-        when blocks are still pinned, vLLM's block_pool returns False without
-        mutating state. On the success path the block_pool does clear the
-        prefix cache hash table, but that's harmless here because sleep() is
-        about to clear it again via reset_prefix_cache(reset_running_requests=
-        True). Times out after DYN_SLEEP_DRAIN_TIMEOUT_S seconds (default 30s);
-        on timeout we log a warning and let sleep() proceed, which will
-        surface the upstream RuntimeError to the caller rather than hanging
-        the sleep endpoint.
+        Uses ``reset_prefix_cache(reset_running_requests=False)`` as a probe:
+        vLLM's block_pool returns False without mutating state when any
+        non-null block is still ref-counted. On the success path the
+        block_pool also clears the prefix cache hash table -- harmless here
+        because sleep() will clear it again immediately afterward.
+
+        Must be called while the scheduler is still stepping (i.e. before
+        pause_generation) so the NIXL connector worker can process consumer
+        notifications and TTL expiry from within scheduler.step().
+
+        Returns:
+            True if all blocks drained before the deadline; False on timeout.
+            A probe RPC failure is treated as drained (returns True) so we
+            don't block sleep on a transient API hiccup -- the subsequent
+            sleep() call will raise the real error if blocks remain pinned.
         """
         try:
             timeout_s = float(
@@ -293,26 +322,27 @@ class VllmEngineQuiesceController:
                 )
             except Exception as e:
                 logger.warning(
-                    "[Sleep] drain probe failed on attempt %d: %s; proceeding to sleep",
+                    "[Sleep] drain probe failed on attempt %d: %s; "
+                    "assuming drained and proceeding to sleep",
                     attempts,
                     e,
                 )
-                return
+                return True
             if freed:
                 if attempts > 1:
                     logger.info(
                         "[Sleep] drained pending KV transfers after %d probe(s)",
                         attempts,
                     )
-                return
+                return True
             if loop.time() >= deadline:
                 logger.warning(
-                    "[Sleep] drain timed out after %.1fs (%d probes); in-flight "
-                    "NIXL transfers may still hold blocks — sleep may fail",
+                    "[Sleep] drain timed out after %.1fs (%d probes); "
+                    "in-flight NIXL transfers still hold blocks",
                     timeout_s,
                     attempts,
                 )
-                return
+                return False
             await asyncio.sleep(self._DRAIN_POLL_INTERVAL_S)
 
     async def resume(self, tags: list[str] | None = None) -> bool:
