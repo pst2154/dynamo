@@ -205,6 +205,8 @@ async fn anthropic_messages(
         }
     }
 
+    request.model = state.resolve_model(&request.model);
+
     // Strip Claude Code billing preamble from system prompt if enabled
     if env_is_truthy(env_llm::DYN_STRIP_ANTHROPIC_PREAMBLE) {
         strip_billing_preamble(&mut request.system);
@@ -558,7 +560,7 @@ async fn list_models(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let models: HashSet<String> = state.manager().model_display_names();
+    let models: HashSet<String> = state.model_display_names();
     let card_map = build_model_context_map(&state);
     let (cw_override, mot_override) = model_env_overrides();
 
@@ -639,7 +641,7 @@ async fn get_model(
     // Strip leading slash from wildcard capture (axum `/{*key}` includes it).
     let model_id = model_id.strip_prefix('/').unwrap_or(&model_id);
 
-    let models: HashSet<String> = state.manager().model_display_names();
+    let models: HashSet<String> = state.model_display_names();
     if !models.contains(model_id) {
         return Err(super::openai::ErrorMessage::model_not_found());
     }

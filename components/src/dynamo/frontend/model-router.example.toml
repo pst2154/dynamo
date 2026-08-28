@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Target IDs are concrete model names registered with the Dynamo frontend;
+# route IDs are virtual model names clients use.
+schema_version = 1
+
+[targets.weak]
+id = "Qwen/Qwen3-0.6B"
+
+[targets.strong]
+id = "Qwen/Qwen3-8B"
+
+[routes.fast]
+id = "fast"
+type = "passthrough"
+target = "weak"
+
+[routes.smart]
+id = "smart"
+type = "random"
+targets = ["weak", "strong"]
+weights = [7.0, 3.0]
+
+# Signal-driven routing for coding agents. Early/ambiguous turns default to the
+# efficient model; tool errors and exploratory stalls move work to capable.
+[routes.agent]
+id = "agent"
+type = "stage_router"
+capable_target = "strong"
+efficient_target = "weak"
+picker = "efficient_first"
+confidence_threshold = 0.5
+recent_turn_window = 3

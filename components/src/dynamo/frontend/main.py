@@ -193,6 +193,9 @@ async def async_main():
         if prefix:
             os.environ["DYN_METRICS_PREFIX"] = config.metrics_prefix
 
+    if config.model_router_config is not None:
+        os.environ["DYN_FRONTEND_MODEL_ROUTER_CONFIG"] = str(config.model_router_config)
+
     loop = asyncio.get_running_loop()
     runtime = DistributedRuntime(loop, config.discovery_backend, config.request_plane)
 

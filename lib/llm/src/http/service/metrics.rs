@@ -279,6 +279,7 @@ pub struct Metrics {
     model_migration_max_seq_len_exceeded_total: IntCounterVec,
     model_cancellation_total: IntCounterVec,
     model_rejection_total: IntCounterVec,
+    model_route_selection_total: IntCounterVec,
 }
 
 // Inflight tracks requests from HTTP handler start until complete response is finished.
@@ -740,6 +741,15 @@ impl Metrics {
         )
         .unwrap();
 
+        let model_route_selection_total = IntCounterVec::new(
+            Opts::new(
+                frontend_metric_name("model_route_selections_total"),
+                "Total virtual-model selections made by frontend policy",
+            ),
+            &["route", "target_model"],
+        )
+        .unwrap();
+
         Metrics {
             request_started_counter,
             request_counter,
@@ -765,6 +775,7 @@ impl Metrics {
             model_migration_max_seq_len_exceeded_total,
             model_cancellation_total,
             model_rejection_total,
+            model_route_selection_total,
         }
     }
 
@@ -848,6 +859,12 @@ impl Metrics {
         self.client_disconnect_gauge.inc();
     }
 
+    pub fn inc_model_route_selection(&self, route: &str, target_model: &str) {
+        self.model_route_selection_total
+            .with_label_values(&[route, target_model])
+            .inc();
+    }
+
     /// Get the count of client disconnections
     pub fn get_client_disconnect_count(&self) -> i64 {
         self.client_disconnect_gauge.get()
@@ -890,6 +907,7 @@ impl Metrics {
         ))?;
         registry.register(Box::new(self.model_cancellation_total.clone()))?;
         registry.register(Box::new(self.model_rejection_total.clone()))?;
+        registry.register(Box::new(self.model_route_selection_total.clone()))?;
 
         Ok(())
     }

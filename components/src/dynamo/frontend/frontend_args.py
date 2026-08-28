@@ -66,6 +66,7 @@ class FrontendConfig(RouterConfigBase, KvRouterConfigBase, AicPerfConfigBase):
     migration_max_seq_len: Optional[int]
     model_name: Optional[str]
     model_path: Optional[str]
+    model_router_config: Optional[pathlib.Path]
     metrics_prefix: Optional[str] = None
 
     kserve_grpc_server: bool
@@ -109,6 +110,11 @@ class FrontendConfig(RouterConfigBase, KvRouterConfigBase, AicPerfConfigBase):
             )
         if self.min_initial_workers < 0:
             raise ValueError("--router-min-initial-workers must be >= 0")
+        if self.model_router_config is not None and not self.model_router_config.is_file():
+            raise ValueError(
+                "--model-router-config must point to a readable TOML file: "
+                f"{self.model_router_config}"
+            )
         if self.tokenizer_backend not in self._VALID_TOKENIZER_BACKENDS:
             raise ValueError(
                 f"--tokenizer: invalid value '{self.tokenizer_backend}' "
@@ -298,6 +304,17 @@ class FrontendArgGroup(ArgGroup):
             default=None,
             help="Path to model directory on disk (e.g., /tmp/model_cache/llama3.2_1B/)",
             arg_type=validate_model_path,
+        )
+        add_argument(
+            g,
+            flag_name="--model-router-config",
+            env_var="DYN_FRONTEND_MODEL_ROUTER_CONFIG",
+            default=None,
+            help=(
+                "Dynamo frontend model-router TOML defining virtual models and routing policies. "
+                "Supports passthrough, weighted-random, and coding-agent stage policies."
+            ),
+            arg_type=pathlib.Path,
         )
         add_argument(
             g,

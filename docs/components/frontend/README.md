@@ -21,6 +21,7 @@ The Dynamo Frontend is the API gateway for serving LLM inference requests. It pr
 | KServe gRPC v2 API | ✅ Supported |
 | Streaming responses (SSE) | ✅ Supported |
 | Multi-model serving | ✅ Supported |
+| Virtual model passthrough, weighted-random, and agent stage routes | 🧪 Experimental |
 | Integrated KV-aware routing | ✅ Supported |
 | Tool calling | ✅ Supported |
 | TLS (HTTPS) | ✅ Supported |
@@ -42,6 +43,29 @@ python -m dynamo.frontend --http-port 8000
 ```
 
 This starts an OpenAI-compatible HTTP server with integrated pre/post processing and routing. Backends are auto-discovered when they call `register_model`.
+
+### Virtual model routes
+
+The frontend includes a model router that exposes policy-backed virtual model names in addition to
+concrete models discovered from workers. It runs in the same process and project as Dynamo's API
+frontend and worker router. Start it with a native Dynamo routing configuration:
+
+```bash
+python -m dynamo.frontend \
+  --http-port 8000 \
+  --model-router-config components/src/dynamo/frontend/model-router.example.toml
+```
+
+Clients can then send a configured route ID such as `fast` or `smart` in the request's `model`
+field. The frontend resolves the route to a concrete registered model before normal preprocessing
+and replica routing. Passthrough, weighted-random, and signal-driven `stage_router` policies are
+currently supported; concrete model names continue to work unchanged. The stage router examines
+Chat Completions tool-call history, escalating critical failures and confident error/exploration
+signals to the capable target while sending settled implementation work to the efficient target.
+
+Selections are logged with the virtual route and concrete target and counted by
+`dynamo_frontend_model_route_selections_total{route,target_model}` (or the configured metrics
+prefix).
 
 The frontend does the pre and post processing. To do this it will need access to the model configuration files: `config.json`, `tokenizer.json`, `tokenizer_config.json`, etc. It does not need the weights.
 
@@ -86,6 +110,7 @@ spec:
 | `--http-port` | 8000 | HTTP server port |
 | `--kserve-grpc-server` | false | Enable KServe gRPC server |
 | `--router-mode` | `round-robin` | Routing strategy: `round-robin`, `random`, `kv`, `direct`, `least-loaded`, `device-aware-weighted` (`power-of-two` and `least-loaded` use synchronous prefill fallback in disaggregated prefill mode) |
+| `--model-router-config` | unset | Dynamo TOML defining virtual model targets and passthrough, weighted-random, or stage-router policies. |
 
 See the [Frontend Guide](frontend-guide.md) for full configuration options.
 

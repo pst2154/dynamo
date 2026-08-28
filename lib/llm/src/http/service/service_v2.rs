@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env::var;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +16,7 @@ use super::Metrics;
 use super::RouteDoc;
 use super::metrics;
 use super::metrics::register_worker_timing_metrics;
+use super::model_policy::ModelPolicy;
 use crate::discovery::ModelManager;
 use crate::endpoint_type::EndpointType;
 use crate::kv_router::metrics::{
@@ -60,6 +61,7 @@ pub struct State {
     discovery_client: Arc<dyn Discovery>,
     flags: StateFlags,
     cancel_token: CancellationToken,
+    model_policy: Option<ModelPolicy>,
 }
 
 #[derive(Default, Debug)]
@@ -125,6 +127,7 @@ impl State {
         manager: Arc<ModelManager>,
         discovery_client: Arc<dyn Discovery>,
         cancel_token: CancellationToken,
+        model_policy: Option<ModelPolicy>,
     ) -> Self {
         Self {
             manager,
@@ -141,6 +144,7 @@ impl State {
                 anthropic_endpoints_enabled: AtomicBool::new(false),
             },
             cancel_token,
+            model_policy,
         }
     }
 
@@ -155,6 +159,58 @@ impl State {
 
     pub fn manager_clone(&self) -> Arc<ModelManager> {
         self.manager.clone()
+    }
+
+    /// Resolve a client-facing virtual model to a concrete registered model.
+    /// Names not present in the policy pass through unchanged.
+    pub fn resolve_model(&self, requested_model: &str) -> String {
+        let resolved = self.model_policy.as_ref().map_or_else(
+            || requested_model.to_string(),
+            |p| p.resolve(requested_model),
+        );
+        self.observe_model_selection(requested_model, &resolved);
+        resolved
+    }
+
+    pub fn resolve_chat_model(
+        &self,
+        requested_model: &str,
+        messages: &[dynamo_protocols::types::ChatCompletionRequestMessage],
+    ) -> String {
+        let resolved = self.model_policy.as_ref().map_or_else(
+            || requested_model.to_string(),
+            |policy| policy.resolve_chat(requested_model, messages),
+        );
+        self.observe_model_selection(requested_model, &resolved);
+        resolved
+    }
+
+    fn observe_model_selection(&self, requested_model: &str, resolved: &str) {
+        if resolved != requested_model {
+            self.metrics
+                .inc_model_route_selection(requested_model, resolved);
+            tracing::info!(
+                route = requested_model,
+                model = resolved,
+                "frontend model policy selected target"
+            );
+        }
+    }
+
+    /// Model names exposed to clients: discovered concrete models plus configured
+    /// virtual route IDs.
+    pub fn model_display_names(&self) -> HashSet<String> {
+        let mut names = self.manager.model_display_names();
+        if let Some(policy) = &self.model_policy {
+            names.extend(policy.route_ids().map(str::to_string));
+        }
+        names
+    }
+
+    pub fn is_virtual_model(&self, model: &str) -> bool {
+        self.model_policy
+            .as_ref()
+            .is_some_and(|policy| policy.contains_route(model))
     }
 
     pub fn discovery(&self) -> Arc<dyn Discovery> {
@@ -481,10 +537,21 @@ static HTTP_SVC_EMB_PATH_ENV: &str = "DYN_HTTP_SVC_EMB_PATH";
 static HTTP_SVC_RESPONSES_PATH_ENV: &str = "DYN_HTTP_SVC_RESPONSES_PATH";
 /// Environment variable to set the anthropic messages endpoint path (default: `/v1/messages`)
 static HTTP_SVC_ANTHROPIC_PATH_ENV: &str = "DYN_HTTP_SVC_ANTHROPIC_PATH";
+/// Dynamo TOML containing frontend model targets and virtual routing policies.
+static MODEL_ROUTER_CONFIG_ENV: &str = "DYN_FRONTEND_MODEL_ROUTER_CONFIG";
 
 impl HttpServiceConfigBuilder {
     pub fn build(self) -> Result<HttpService, anyhow::Error> {
         let config: HttpServiceConfig = self.build_internal()?;
+
+        let model_policy = match var(MODEL_ROUTER_CONFIG_ENV) {
+            Ok(path) if !path.trim().is_empty() => {
+                let policy = ModelPolicy::from_path(std::path::Path::new(&path))?;
+                tracing::info!(path, "loaded Dynamo frontend model router");
+                Some(policy)
+            }
+            _ => None,
+        };
 
         let model_manager = Arc::new(ModelManager::new());
         let cancel_token = config.cancel_token.unwrap_or_default();
@@ -497,7 +564,12 @@ impl HttpServiceConfigBuilder {
                 cancel_token.child_token(),
             )) as Arc<dyn Discovery>
         });
-        let state = Arc::new(State::new(model_manager, discovery_client, cancel_token));
+        let state = Arc::new(State::new(
+            model_manager,
+            discovery_client,
+            cancel_token,
+            model_policy,
+        ));
         state
             .flags
             .set(&EndpointType::Chat, config.enable_chat_endpoints);

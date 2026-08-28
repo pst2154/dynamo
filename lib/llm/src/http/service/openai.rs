@@ -429,6 +429,7 @@ async fn handler_completions(
     check_ready(&state)?;
 
     request.nvext = apply_header_routing_overrides(request.nvext.take(), &headers);
+    request.inner.model = state.resolve_model(&request.inner.model);
 
     // create the context for the request
     let request_id = get_or_create_request_id(&headers);
@@ -1210,6 +1211,8 @@ async fn chat_completions(
         }
     }
 
+    request.inner.model = state.resolve_chat_model(&request.inner.model, &request.inner.messages);
+
     // Capture the resolved model after template application for metrics and engine lookup
     // todo - make the protocols be optional for model name
     // todo - when optional, if none, apply a default
@@ -1590,6 +1593,9 @@ async fn responses(
             request.inner.max_output_tokens = Some(template.max_completion_tokens);
         }
     }
+    if let Some(requested_model) = request.inner.model.as_deref() {
+        request.inner.model = Some(state.resolve_model(requested_model));
+    }
     tracing::trace!("Received responses request: {:?}", request.inner);
 
     let model = request.inner.model.clone().unwrap_or_default();
@@ -1946,7 +1952,7 @@ async fn list_models_openai(
 
     let mut data = Vec::new();
 
-    let models: HashSet<String> = state.manager().model_display_names();
+    let models: HashSet<String> = state.model_display_names();
     for model_name in models {
         let context_window = cw_override.or_else(|| card_map.get(&model_name).map(|&cl| cl as u64));
         data.push(ModelListing {
@@ -2064,7 +2070,7 @@ async fn get_model_openai(
 
     let model_id = model_id.strip_prefix('/').unwrap_or(&model_id);
 
-    let models: HashSet<String> = state.manager().model_display_names();
+    let models: HashSet<String> = state.model_display_names();
     if !models.contains(model_id) {
         return Err(ErrorMessage::model_not_found());
     }
