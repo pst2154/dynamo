@@ -65,7 +65,8 @@ signals to the capable target while sending settled implementation work to the e
 
 Selections are logged with the virtual route and concrete target and counted by
 `dynamo_frontend_model_route_selections_total{route,target_model}` (or the configured metrics
-prefix).
+prefix). See the [Frontend Model Router](model-router.md) guide for the complete configuration,
+policy reference, request examples, protocol behavior, and current limitations.
 
 The frontend does the pre and post processing. To do this it will need access to the model configuration files: `config.json`, `tokenizer.json`, `tokenizer_config.json`, etc. It does not need the weights.
 
@@ -120,5 +121,6 @@ See the [Frontend Guide](frontend-guide.md) for full configuration options.
 |----------|-------------|
 | [Configuration Reference](configuration.md) | All CLI arguments, env vars, and HTTP endpoints |
 | [Frontend Guide](frontend-guide.md) | KServe gRPC configuration and integration |
+| [Frontend Model Router](model-router.md) | Virtual models and model-selection policies |
 | [NVIDIA Request Extensions (nvext)](nvext.md) | Custom request fields for routing hints and cache control |
 | [Router Documentation](../router/README.md) | KV-aware routing configuration |

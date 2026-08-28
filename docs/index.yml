@@ -315,6 +315,8 @@ navigation:
         contents:
           - page: Frontend Guide
             path: components/frontend/frontend-guide.md
+          - page: Frontend Model Router
+            path: components/frontend/model-router.md
           - page: Configuration Reference
             path: components/frontend/configuration.md
           - page: Tokenizer
