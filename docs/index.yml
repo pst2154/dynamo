@@ -317,6 +317,8 @@ navigation:
             path: components/frontend/frontend-guide.md
           - page: Frontend Model Router
             path: components/frontend/model-router.md
+          - page: Switchyard Translation Integration
+            path: components/frontend/switchyard-translation-integration.md
           - page: Configuration Reference
             path: components/frontend/configuration.md
           - page: Tokenizer

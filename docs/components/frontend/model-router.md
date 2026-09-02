@@ -204,4 +204,5 @@ If `--metrics-prefix` is configured, it replaces the default `dynamo` prefix.
 
 - [Frontend overview](README.md)
 - [Frontend configuration reference](configuration.md)
+- [Switchyard translation integration](switchyard-translation-integration.md)
 - [Worker router](../router/README.md)
