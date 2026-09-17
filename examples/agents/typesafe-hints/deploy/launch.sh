@@ -40,6 +40,10 @@ mkdir -p "$DYN_FILE_KV"
 python3 -m venv --system-site-packages "$RUNTIME_DIR/venv"
 "$RUNTIME_DIR/venv/bin/python" -m pip install "$SCRIPT_DIR/.."
 GPU_MEM_ARGS=$(build_sglang_gpu_mem_args)
+CAPACITY_ARGS=()
+if [[ -n "${MAX_RUNNING_REQUESTS:-}" ]]; then
+    CAPACITY_ARGS+=(--max-running-requests "$MAX_RUNNING_REQUESTS")
+fi
 print_launch_banner "TypeSafe agent hints with SGLang" "$MODEL" "$DYN_HTTP_PORT"
 
 python3 -m dynamo.frontend --discovery-backend file \
@@ -52,7 +56,8 @@ CHILD_PIDS+=("$!")
 python3 -m dynamo.sglang --model-path "$MODEL" --served-model-name "$MODEL" \
     --discovery-backend file --enable-priority-scheduling \
     --radix-eviction-policy priority --page-size 16 --tp 1 \
-    --disable-piecewise-cuda-graph $GPU_MEM_ARGS &
+    --disable-piecewise-cuda-graph --schedule-policy fcfs \
+    "${CAPACITY_ARGS[@]}" $GPU_MEM_ARGS &
 CHILD_PIDS+=("$!")
 
 "$RUNTIME_DIR/venv/bin/python" -m typesafe_agent_hints.server \

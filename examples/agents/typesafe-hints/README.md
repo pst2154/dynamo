@@ -8,6 +8,9 @@ SPDX-License-Identifier: Apache-2.0
 Experimental proxy that uses TypeSafe System One to infer NVIDIA Dynamo
 `nvext.agent_hints` for chat completions. No Dynamo core changes are required.
 The [validation report](REPORT.md) records the H100 experiment, evidence, and limitations.
+In the controlled synthetic benchmark, online hints reduced urgent TTFT under
+contention by 34.8%, but increased overall latency and reduced achieved throughput.
+Static application hints performed better. See the [benchmark protocol](BENCHMARK.md).
 
 ## Run Against an Existing Dynamo Endpoint
 
@@ -85,7 +88,7 @@ reserve GPUs or encode private partition/account names.
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
 The launcher also accepts `MODEL`, `DYN_HTTP_PORT`, `DYN_SYSTEM_PORT`,
-`HF_HOME`, and the shared SGLang GPU-memory overrides. Defaults are the tested
+`HF_HOME`, optional `MAX_RUNNING_REQUESTS`, and the shared SGLang GPU-memory overrides. Defaults are the tested
 model, port 8000, port 8081, and an ephemeral model cache.
 
 Only `POST /v1/chat/completions` is forwarded. Streaming response bytes are

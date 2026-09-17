@@ -5,18 +5,147 @@ SPDX-License-Identifier: Apache-2.0
 
 ## TypeSafe-to-Dynamo Agent Hints: Implementation and Validation
 
-Date: September 17, 2026. Status: functional proof of concept; not a performance
-benchmark or production qualification.
+Date: September 17, 2026. Status: functional proof of concept with a controlled
+synthetic H100 benchmark; not production qualification.
 
-## Outcome
+## Does it improve anything?
+
+**Yes, urgent-request latency under the tested queueing condition; no, overall
+performance.** Online TypeSafe hints reduced urgent mean Time To First Token
+(TTFT) from 953 ms to 622 ms, a **34.8% reduction including evaluation overhead**.
+But average latency across all requests increased by 69.2%, and achieved output
+tokens/second fell by 30.5%. Static application hints performed better than
+TypeSafe on every measured workload.
+
+Recommendation: use application-provided hints when intent is already known.
+Consider semantic inference only when priority cannot be supplied directly and
+the value of prioritizing urgent work outweighs the extra delay for other work.
+This implementation should not be presented as a general Dynamo speedup.
+
+## Controlled Benchmark Results
+
+The comparison used one H100 80 GB, the same Qwen3-0.6B model and frontend, and
+SGLang with `--max-running-requests 4 --schedule-policy fcfs` plus priority
+scheduling. The capacity limit deliberately creates a queue; it is not the
+H100's maximum-throughput configuration. Each generation produced exactly 128
+tokens. Every variant used the same proxy handler. Six repetitions covered all
+six run-order permutations. All 864 measured requests succeeded, with no
+TypeSafe fallbacks. The run finished at 21:21:29 UTC on September 17, 2026.
+
+### Urgent Work Under Contention
+
+Each burst contained 18 background requests followed by six urgent requests.
+There were 144 requests per variant, including 36 urgent requests.
+
+| Metric | No hints | Static application hints | Online TypeSafe hints |
+| --- | ---: | ---: | ---: |
+| Urgent mean TTFT, ms | 953 | 177 | 622 |
+| Urgent p95 TTFT, ms | 1,213 | 317 | 809 |
+| Urgent mean total latency, ms | 1,152 | 376 | 825 |
+| Background mean TTFT, ms | 433 | 640 | 1,241 |
+| All-request mean total latency, ms | 763 | 724 | 1,291 |
+| Achieved output tokens/second | 2,212 | 2,277 | 1,536 |
+
+The TypeSafe urgent-TTFT improvement occurred in all six paired repetitions.
+A paired bootstrap over repetition means gives a descriptive 95% interval of
+27.8–40.8% improvement. Urgent total latency improved by 28.4%. This is a
+redistribution of service toward urgent requests, not a throughput improvement:
+background TTFT became 2.86 times the baseline. Static hints reduced urgent TTFT
+by 81.4%, without an evaluation call, but also delayed background requests.
+
+The first no-hints burst was slower than later repetitions. Keeping all runs
+gives the numbers above. Excluding the entire first paired repetition from all
+three variants still gives a 32.0% TypeSafe urgent-TTFT reduction; the direction
+does not depend on that first burst.
+
+Numeric [worker telemetry](results/benchmark-telemetry.json) confirms real
+contention: each variant reached 20 queued requests with four running requests.
+These are log-sampled peaks, not time-weighted queue statistics. Router pending
+queue tiers and multi-worker load balancing were not isolated or validated.
+
+### Control: Evaluate, Then Discard the Hints
+
+A follow-up control retained the full online TypeSafe evaluation but discarded
+its hints before forwarding. Six alternating paired repetitions added 288
+requests, all successful without fallback. The same four-request worker limit,
+24-request burst, and fixed token budget were retained.
+
+Urgent mean TTFT was 1,091 ms when hints were discarded versus 594 ms when
+applied: a 45.6% reduction, with a descriptive paired-bootstrap interval of
+40.6–49.5%, and an improvement in all six pairs. Both arms reached 20 queued
+requests. This supports a contribution from applying the hints, not merely from
+delaying requests while calling TypeSafe. It still does not isolate individual
+hint fields or remove external-service timing variation between trials.
+
+Inspect the [control's raw results](results/benchmark-ablation.json),
+[summary](results/ablation-summary.json), and
+[queue evidence](results/ablation-telemetry.json). This separate control does not
+replace the main three-arm comparison or its overall regressions.
+
+### Low Load and Two-Turn Work
+
+| Metric | No hints | Static application hints | Online TypeSafe hints |
+| --- | ---: | ---: | ---: |
+| Low-load mean TTFT, ms | 40.1 | 40.0 | 256.7 |
+| Low-load mean total latency, ms | 205.4 | 204.9 | 441.4 |
+| Two-turn workload mean latency per request, ms | 218.7 | 218.7 | 484.8 |
+| Second-turn mean TTFT, ms | 23.8 | 23.5 | 294.0 |
+
+Low load had 48 requests per variant. The two-turn workload had 48 conversations
+(96 requests) per variant with a 250 ms simulated tool delay. Neither workload
+had an observed worker queue. TypeSafe evaluation averaged 234 ms at low load,
+432 ms in bursts, and 264 ms in the two-turn workload, including HTTP transport.
+
+Speculation did execute: the frontend logged 48 speculative-prefill actions for
+static hints and 96 for TypeSafe. TypeSafe requested speculation after both turns,
+including 48 final turns with no subsequent request in this benchmark. Static
+hints used knowledge of the fixed session boundary. No useful end-to-end
+speculation benefit was established in this warm-cache, small-model workload.
+
+### What Was and Was Not Demonstrated
+
+TypeSafe assigned priority 0 to background requests and 7 to urgent requests in
+these explicit synthetic prompts; static hints used 0 and 10. This is not an
+accuracy evaluation on ambiguous or held-out real agent traffic. Static hints
+also know the forced output length and session boundary. They are a strong
+application-metadata baseline, not another classifier.
+
+The benchmark leaves the four-question policy and thresholds unchanged and
+includes the current per-call evaluation HTTP-session creation. The static
+control deliberately bypasses TypeSafe; passing explicit hints to the normal
+prototype proxy still incurs evaluation. The benchmark therefore compares
+architectural choices, not three public proxy configuration modes.
+
+The KV cache is not flushed between arms; initial prompts are warmed equally,
+and order is counterbalanced. All 96 corresponding two-turn message inputs
+matched across variants by hash; 95 of 96 corresponding outputs matched. Future
+runs must audit this again because follow-up messages contain generated output.
+The first-burst effect, six-repetition sample, explicit class cues, small model,
+fixed generation lengths, and artificially capped concurrency limit
+generalization. No H200/B200/B300, large-model, cold-cache, or production SLO
+claim follows from this result. OSL routing benefit cannot be established with
+one worker; priority cache eviction was not tested under memory pressure.
+
+Main-matrix TypeSafe usage was 467,295 input tokens and 36,576 output tokens across
+288 evaluations, excluding warm-ups. No dollar-cost claim is made.
+
+Reproduce and inspect:
+
+- [Benchmark protocol and commands](BENCHMARK.md)
+- [Raw requests, timings, judgments, and usage](results/benchmark-h100.json)
+- [Aggregated metrics and paired intervals](results/benchmark-summary.json)
+- [Benchmark runner](src/typesafe_agent_hints/benchmark.py) and
+  [analyzer](src/typesafe_agent_hints/analyze_benchmark.py)
+
+## Initial Functional Validation
 
 A TypeSafe-backed proxy generated serving hints, forwarded real chat requests to
 Dynamo with SGLang on one H100 80 GB, and returned both non-streaming and streaming
 responses. Explicit caller overrides survived forwarding. The frontend logged a
 speculative next-turn prefill for one inferred-positive request.
 
-This establishes an integration path, not that inferred hints improve latency,
-throughput, fairness, or cache efficiency. H200, B200, and B300 were not tested.
+This initial smoke test established only the integration path. The controlled
+comparison above was added afterward to measure benefits and regressions.
 
 ## Architecture and Policy
 
@@ -117,7 +246,7 @@ TypeSafe answers, fallback, fail-closed mode, caller precedence, invalid input,
 and server-sent event byte preservation. The local suite does not call TypeSafe
 or load a GPU model. See [reproduction instructions](README.md).
 
-Local packaging checks: 15 tests passed; Python lint/format and Bash syntax checks
+Local packaging checks: 22 tests passed; Python lint/format and Bash syntax checks
 passed. Documentation lint reported no errors and five pre-existing navigation
 warnings elsewhere in the repository. The Fern CLI is not installed in the local
 environment, so a full site build and Fern broken-link check were not run.
@@ -131,14 +260,14 @@ re-executed as a complete container deployment.
 
 ## Remaining Validation
 
-Before making performance or production claims:
+Before generalizing these measurements or making production claims:
 
-1. Compare no hints, static hints, and TypeSafe hints on the same trace, seed,
-   model, concurrency, and GPU allocation.
-2. Measure classification latency separately from generation TTFT and total
-   latency; collect p50/p95/p99, tokens/second, failures, and TypeSafe cost.
-3. Introduce contention and mixed priorities; check starvation and whether
-   strict priority delivers the intended scheduling behavior.
+1. Repeat the three-arm comparison on held-out real traces, larger models,
+   default-capacity workers, and several arrival rates.
+2. Measure sustained load, service-level-objective goodput, evaluation cost,
+   and enough independent trials for reliable tail estimates.
+3. Check starvation over long mixed-priority runs and isolate router strict
+   priority from backend priority and admission timing.
 4. Measure OSL error against actual output tokens and test routing under load.
 5. Replay multi-turn tool workflows; measure prefill reuse, wasted GPU work,
    cache occupancy, and latency with speculation enabled versus disabled.

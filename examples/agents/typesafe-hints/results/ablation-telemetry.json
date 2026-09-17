@@ -1,0 +1,125 @@
+{
+  "description": "Timestamp-window log samples per arm, including warm-up. Counts are evidence of activity, not time-weighted queue metrics or cache-hit measurements.",
+  "runs": [
+    {
+      "suite": "contention",
+      "repeat": 0,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 62,
+      "positive_queue_samples": 31,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 0,
+      "mode": "typesafe",
+      "queue_samples": 51,
+      "positive_queue_samples": 22,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 1,
+      "mode": "typesafe",
+      "queue_samples": 51,
+      "positive_queue_samples": 21,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 1,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 51,
+      "positive_queue_samples": 22,
+      "max_queue_requests": 19,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 2,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 57,
+      "positive_queue_samples": 26,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 2,
+      "mode": "typesafe",
+      "queue_samples": 51,
+      "positive_queue_samples": 21,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 3,
+      "mode": "typesafe",
+      "queue_samples": 52,
+      "positive_queue_samples": 21,
+      "max_queue_requests": 17,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 3,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 57,
+      "positive_queue_samples": 28,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 4,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 52,
+      "positive_queue_samples": 21,
+      "max_queue_requests": 19,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 4,
+      "mode": "typesafe",
+      "queue_samples": 51,
+      "positive_queue_samples": 22,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 5,
+      "mode": "typesafe",
+      "queue_samples": 52,
+      "positive_queue_samples": 22,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 5,
+      "mode": "typesafe_no_hints",
+      "queue_samples": 52,
+      "positive_queue_samples": 22,
+      "max_queue_requests": 20,
+      "max_running_requests": 4,
+      "speculative_prefill_events": 0
+    }
+  ]
+}
