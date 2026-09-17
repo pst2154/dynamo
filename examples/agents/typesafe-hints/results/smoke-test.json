@@ -1,0 +1,123 @@
+{
+  "status": "ok",
+  "cases": [
+    {
+      "name": "interactive_agent",
+      "preview": {
+        "explicit_hints": {},
+        "inferred_hints": {
+          "priority": 10,
+          "strict_priority": 0,
+          "osl": 64,
+          "speculative_prefill": true
+        },
+        "merged_hints": {
+          "priority": 10,
+          "strict_priority": 0,
+          "osl": 64,
+          "speculative_prefill": true
+        },
+        "source": "typesafe",
+        "answers": {
+          "priority": {
+            "type": "choice",
+            "choice": "urgent",
+            "confidence": 0.66,
+            "probabilities": {
+              "interactive": 0.25,
+              "urgent": 0.75,
+              "standard": 0.0,
+              "background": 0.0
+            }
+          },
+          "strict_priority": {
+            "type": "noul",
+            "noul": 0.71
+          },
+          "output_length": {
+            "type": "choice",
+            "choice": "tiny",
+            "confidence": 0.88,
+            "probabilities": {
+              "long": 0.0,
+              "short": 0.08,
+              "tiny": 0.92,
+              "very_long": 0.0
+            }
+          },
+          "speculative_prefill": {
+            "type": "noul",
+            "noul": 0.78
+          }
+        }
+      },
+      "forwarded_hints": {
+        "priority": 10,
+        "strict_priority": 0,
+        "osl": 64,
+        "speculative_prefill": true
+      },
+      "completion_id": "chatcmpl-89cf3a77-fd25-4313-be6c-3ffa2de9b790",
+      "completion_text": "<think>\nOkay, the user mentioned that the checkout API is down and customers are blocked. I need to figure out the next debugging step. Let's start by breaking down the problem.\n\nFirst, the API is down. That means the payment processing is "
+    },
+    {
+      "name": "background_summary",
+      "preview": {
+        "explicit_hints": {},
+        "inferred_hints": {
+          "priority": 3,
+          "strict_priority": 0,
+          "osl": 40,
+          "speculative_prefill": false
+        },
+        "merged_hints": {
+          "priority": 3,
+          "strict_priority": 0,
+          "osl": 40,
+          "speculative_prefill": false
+        },
+        "source": "typesafe",
+        "answers": {
+          "priority": {
+            "type": "choice",
+            "choice": "standard",
+            "confidence": 0.47,
+            "probabilities": {
+              "interactive": 0.01,
+              "urgent": 0.0,
+              "standard": 0.61,
+              "background": 0.38
+            }
+          },
+          "strict_priority": {
+            "type": "noul",
+            "noul": 0.05
+          },
+          "output_length": {
+            "type": "choice",
+            "choice": "tiny",
+            "confidence": 0.96,
+            "probabilities": {
+              "short": 0.03,
+              "long": 0.0,
+              "tiny": 0.97,
+              "very_long": 0.0
+            }
+          },
+          "speculative_prefill": {
+            "type": "noul",
+            "noul": 0.28
+          }
+        }
+      },
+      "forwarded_hints": {
+        "priority": 3,
+        "strict_priority": 0,
+        "osl": 40,
+        "speculative_prefill": false
+      },
+      "completion_id": "chatcmpl-d293e22e-b75f-4ce6-a9f4-94544e548e37",
+      "completion_text": "<think>\nOkay, the user wants me to summarize these archived maintenance notes in one sentence. Let me think about how to approach this.\n\nFirst, the original query is in Chinese, so I need to"
+    }
+  ]
+}
