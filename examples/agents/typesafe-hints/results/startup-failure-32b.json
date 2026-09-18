@@ -1,0 +1,26 @@
+{
+  "model": "Qwen/Qwen3-32B-FP8",
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "driver": "595.58.03",
+  "time_utc": "2026-09-17T23:00:58Z",
+  "phase": "First long-input warmup, before any measured benchmark arm completed",
+  "live_streaming_checks": "passed",
+  "measured_arms_completed": 0,
+  "worker_error": "CUDA error: unknown error in per_token_group_quant_8bit_v2",
+  "host_nvidia_smi": "Unable to determine the device handle; No devices were found",
+  "kernel_evidence": [
+    "Xid 79: GPU has fallen off the bus",
+    "Xid 154: GPU recovery action changed to Node Reboot Required"
+  ],
+  "second_node_attempt": {
+    "time_utc": "2026-09-17T23:11:11Z",
+    "measured_arms_completed": 0,
+    "worker_error": "CUDA error: unknown error during asynchronous device-to-host transfer",
+    "kernel_evidence": [
+      "Xid 79: GPU has fallen off the bus",
+      "Xid 154: Node Reboot Required"
+    ],
+    "action": "Stopped retrying this H100 hardware/driver pool and requested a different GPU family"
+  },
+  "conclusion": "Infrastructure failures; not measured hint-policy outcomes. No hardware reset or reboot attempted."
+}

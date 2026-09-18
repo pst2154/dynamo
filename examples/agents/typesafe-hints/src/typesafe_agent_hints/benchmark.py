@@ -31,12 +31,20 @@ import math
 import os
 import socket
 import statistics
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aiohttp import ClientError, ClientSession, ClientTimeout, web
+from aiohttp import (
+    ClientError,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+    TCPConnector,
+    web,
+)
 from typesafe_agent_hints.policy import HintDecision, HintEngine
 from typesafe_agent_hints.server import create_app
 from typesafe_agent_hints.typesafe import TypeSafeEvaluator
@@ -94,7 +102,20 @@ class RecordingEvaluator:
 
     async def evaluate(self, state, questions):
         start = time.perf_counter()
-        response = await self.delegate.evaluate(state, questions)
+        try:
+            response = await self.delegate.evaluate(state, questions)
+        except (ClientError, TimeoutError, ValueError) as error:
+            self.calls.append(
+                {
+                    "state_sha256": fingerprint(state),
+                    "elapsed_ms": (time.perf_counter() - start) * 1000,
+                    "error_type": type(error).__name__,
+                    "http_status": error.status
+                    if isinstance(error, ClientResponseError)
+                    else None,
+                }
+            )
+            raise
         self.calls.append(
             {
                 "state_sha256": fingerprint(state),
@@ -124,6 +145,9 @@ class TimedEngine:
             "hint_ms": (time.perf_counter() - start) * 1000,
             "source": decision.source,
             "inferred_hints": decision.hints,
+            "fallback_error": decision.answers.get("error")
+            if decision.source == "fallback"
+            else None,
         }
         if self.mode == "typesafe_no_hints":
             return HintDecision({}, decision.answers, decision.source)
@@ -132,7 +156,9 @@ class TimedEngine:
 
 @asynccontextmanager
 async def proxy_endpoint(engine, upstream):
-    runner = web.AppRunner(create_app(engine, upstream), access_log=None)
+    runner = web.AppRunner(
+        create_app(engine, upstream, connection_limit=0), access_log=None
+    )
     await runner.setup()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
@@ -146,7 +172,9 @@ async def proxy_endpoint(engine, upstream):
             await runner.cleanup()
 
 
-def make_payload(model, repeat, index, tokens, urgent, multi_turn=False):
+def make_payload(
+    model, repeat, index, tokens, urgent, multi_turn=False, padding_lines=None
+):
     # The same serialized payload is reused across arms within a repetition.
     trace = hashlib.sha256(f"{repeat}:{index}".encode()).hexdigest()
     context = (
@@ -163,13 +191,15 @@ def make_payload(model, repeat, index, tokens, urgent, multi_turn=False):
         else "This is a one-shot request; no follow-up turn is planned. "
     )
     padding = "Synthetic log entry: cache lookup succeeded and worker is healthy. "
+    if padding_lines is None:
+        padding_lines = 160 if multi_turn else 8
     return {
         "model": model,
         "messages": [
             {
                 "role": "user",
                 "content": f"Trace {trace}. {context}{task}\n"
-                + padding * (160 if multi_turn else 8)
+                + padding * padding_lines
                 + "\nWrite a numbered diagnostic checklist. Continue until the token limit.",
             }
         ],
@@ -255,8 +285,45 @@ async def generate(session, endpoint, payload, engine, request_class, index, tur
     return row, "".join(parts)
 
 
+def arrival_offset(index, count):
+    """Keep urgent arrivals after the entire background burst at every load."""
+    background_count = count * 3 // 4
+    if index < background_count:
+        return index * 0.005
+    return max(0.15, background_count * 0.005) + (index - background_count) * 0.005
+
+
+async def reset_cache(endpoint):
+    """Run the optional Dynamo-native reset helper outside measured timing."""
+    env = os.environ.copy()
+    env.pop("DYN_SYSTEM_PORT", None)
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "typesafe_agent_hints.reset_cache",
+        "--endpoint",
+        endpoint,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        async with asyncio.timeout(60):
+            stdout, stderr = await process.communicate()
+    except TimeoutError:
+        process.kill()
+        await process.communicate()
+        raise
+    if process.returncode != 0 or b"CACHE_RESET_OK" not in stdout.splitlines():
+        raise RuntimeError(
+            "Cache reset failed: " + stderr.decode(errors="replace")[-2000:]
+        )
+
+
 async def run_arm(args, suite, repeat, mode):
     started_at = datetime.now(timezone.utc).isoformat()
+    if args.cache_reset_endpoint:
+        await reset_cache(args.cache_reset_endpoint)
     evaluator = RecordingEvaluator(TypeSafeEvaluator(os.environ["TYPESAFE_API_KEY"]))
     engine = TimedEngine(mode, evaluator)
     count = args.requests if suite == "contention" else args.sessions
@@ -268,11 +335,14 @@ async def run_arm(args, suite, repeat, mode):
             args.tokens,
             i >= count * 3 // 4,
             suite == "multi_turn",
+            args.padding_lines,
         )
         for i in range(count)
     ]
-    timeout = ClientTimeout(total=180)
-    async with ClientSession(timeout=timeout) as session:
+    timeout = ClientTimeout(total=args.request_timeout)
+    async with ClientSession(
+        timeout=timeout, connector=TCPConnector(limit=0)
+    ) as session:
         # Warm every input equally in every arm; these requests are excluded.
         for payload in payloads:
             warm = {**payload, "max_tokens": 1, "stream": False}
@@ -293,11 +363,7 @@ async def run_arm(args, suite, repeat, mode):
                 urgent = index >= count * 3 // 4
                 if suite == "contention":
                     # Background arrives first; urgency has to overcome an existing queue.
-                    offset = (
-                        index * 0.005
-                        if not urgent
-                        else 0.15 + (index - count * 3 // 4) * 0.005
-                    )
+                    offset = arrival_offset(index, count)
                     await asyncio.sleep(max(0, start + offset - time.perf_counter()))
                 request = (
                     with_static_hints(payload, urgent, suite == "multi_turn")
@@ -349,6 +415,7 @@ async def run_arm(args, suite, repeat, mode):
         "started_at": started_at,
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "payload_sha256": fingerprint(payloads),
+        "cache_reset_before_warmup": bool(args.cache_reset_endpoint),
         "summary": summarize(records, elapsed),
         "records": records,
         "evaluations": evaluator.calls,
@@ -367,6 +434,11 @@ async def main_async(args):
             "tokens": args.tokens,
             "think_seconds": args.think_seconds,
             "worker_max_running_requests": args.worker_max_running_requests,
+            "padding_lines": args.padding_lines,
+            "request_timeout_seconds": args.request_timeout,
+            "http_connection_limit": 0,
+            "cache_reset_endpoint": args.cache_reset_endpoint,
+            "arrival_schedule": "5ms spacing; urgent begins after background or 150ms, whichever is later",
             "modes": args.modes,
             "ordering": "all permutations cycled across repetitions",
             "warmup": "one unmeasured token per input before every arm",
@@ -379,6 +451,7 @@ async def main_async(args):
         else [args.suite]
     )
     orders = list(itertools.permutations(args.modes))
+    args.output.write_text(json.dumps(output, indent=2) + "\n")
     for suite in suites:
         for repeat in range(args.rounds):
             for mode in orders[repeat % len(orders)]:
@@ -417,7 +490,17 @@ def main():
     parser.add_argument("--sessions", type=int, default=8)
     parser.add_argument("--tokens", type=int, default=128)
     parser.add_argument("--think-seconds", type=float, default=0.25)
-    parser.add_argument("--worker-max-running-requests", type=int, required=True)
+    parser.add_argument(
+        "--worker-max-running-requests",
+        type=int,
+        help="Configured worker override; omit when using automatic capacity",
+    )
+    parser.add_argument("--padding-lines", type=int)
+    parser.add_argument("--request-timeout", type=float, default=600)
+    parser.add_argument(
+        "--cache-reset-endpoint",
+        help="Single exclusive Dynamo worker clear_kv_blocks endpoint; requires ai-dynamo and matching DYN_FILE_KV",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if len(set(args.modes)) != len(args.modes):
@@ -428,11 +511,19 @@ def main():
             args.requests,
             args.sessions,
             args.tokens,
-            args.worker_max_running_requests,
         )
         <= 0
     ):
         parser.error("counts, token limits, and worker capacity must be positive")
+    if (
+        args.worker_max_running_requests is not None
+        and args.worker_max_running_requests <= 0
+    ):
+        parser.error("worker capacity override must be positive")
+    if args.padding_lines is not None and args.padding_lines < 0:
+        parser.error("padding lines must be nonnegative")
+    if not math.isfinite(args.request_timeout) or args.request_timeout <= 0:
+        parser.error("request timeout must be finite and positive")
     asyncio.run(main_async(args))
 
 

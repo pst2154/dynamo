@@ -17,14 +17,17 @@
 """Regression tests for benchmark accounting and matched request generation."""
 
 import pytest
-from aiohttp import ClientSession
+from aiohttp import ClientResponseError, ClientSession
 from typesafe_agent_hints.analyze_benchmark import analyze, paired_improvement
 from typesafe_agent_hints.benchmark import (
+    RecordingEvaluator,
     TimedEngine,
+    arrival_offset,
     fingerprint,
     make_payload,
     percentile,
     proxy_endpoint,
+    reset_cache,
     summarize,
     with_static_hints,
 )
@@ -37,6 +40,70 @@ def test_percentiles_use_linear_interpolation():
     assert percentile([], 0.5) is None
     assert percentile([40, 10, 30, 20], 0.5) == 25
     assert percentile([10, 20], 0.95) == 19.5
+
+
+@pytest.mark.parametrize("count", [8, 24, 32, 128, 256])
+def test_urgent_arrivals_follow_background_at_every_load(count):
+    background_count = count * 3 // 4
+    assert arrival_offset(background_count, count) > arrival_offset(
+        background_count - 1, count
+    )
+    assert arrival_offset(background_count, count) >= 0.15
+
+
+def test_configurable_prompt_size_preserves_matched_inputs():
+    short = make_payload("model", 1, 0, 256, False, padding_lines=8)
+    long = make_payload("model", 1, 0, 256, False, padding_lines=160)
+    assert len(long["messages"][0]["content"]) > len(short["messages"][0]["content"])
+    assert long == make_payload("model", 1, 0, 256, False, padding_lines=160)
+
+
+async def test_evaluator_records_sanitized_http_failure():
+    class FailingEvaluator:
+        async def evaluate(self, state, questions):
+            raise ClientResponseError(None, (), status=429, message="not retained")
+
+    evaluator = RecordingEvaluator(FailingEvaluator())
+    with pytest.raises(ClientResponseError):
+        await evaluator.evaluate({"synthetic": True}, {})
+    record = evaluator.calls[0]
+    assert record["error_type"] == "ClientResponseError"
+    assert record["http_status"] == 429
+    assert "not retained" not in str(record)
+
+
+@pytest.mark.parametrize(
+    "output,returncode,success",
+    [
+        (b"log\nCACHE_RESET_OK\n", 0, True),
+        (b"CACHE_RESET_OK\n", 1, False),
+        (b"", 0, False),
+    ],
+)
+async def test_reset_requires_successful_process_and_acknowledgment(
+    monkeypatch, output, returncode, success
+):
+    class Process:
+        async def communicate(self):
+            return output, b"diagnostic"
+
+    process = Process()
+    process.returncode = returncode
+
+    async def spawn(*args, **kwargs):
+        assert args[-1] == "dynamo.backend.clear_kv_blocks"
+        assert "DYN_SYSTEM_PORT" not in kwargs["env"]
+        return process
+
+    monkeypatch.setenv("DYN_SYSTEM_PORT", "12345")
+    monkeypatch.setattr(
+        "typesafe_agent_hints.benchmark.asyncio.create_subprocess_exec", spawn
+    )
+    if success:
+        await reset_cache("dynamo.backend.clear_kv_blocks")
+    else:
+        with pytest.raises(RuntimeError, match="Cache reset failed"):
+            await reset_cache("dynamo.backend.clear_kv_blocks")
 
 
 def test_static_control_preserves_model_work_and_original_payload():

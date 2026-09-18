@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "checks": [
+    {
+      "stream": false,
+      "hints": {
+        "priority": 5,
+        "strict_priority": 1,
+        "osl": 32,
+        "speculative_prefill": false
+      },
+      "source": "typesafe",
+      "chunks": 1,
+      "content": "hello",
+      "elapsed_seconds": 13.641
+    },
+    {
+      "stream": true,
+      "hints": {
+        "priority": 5,
+        "strict_priority": 1,
+        "osl": 32,
+        "speculative_prefill": false
+      },
+      "source": "typesafe",
+      "chunks": 2,
+      "content": "hello",
+      "elapsed_seconds": 0.237
+    }
+  ]
+}

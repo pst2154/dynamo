@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Any
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientTimeout, TCPConnector, web
 
 from .policy import HintEngine, enrich_request, existing_hints, merge_hints
 from .typesafe import TypeSafeEvaluator
@@ -32,6 +32,7 @@ LOG = logging.getLogger("typesafe_agent_hints")
 ENGINE_KEY = web.AppKey("engine", Any)
 UPSTREAM_KEY = web.AppKey("upstream", str)
 SESSION_KEY = web.AppKey("session", ClientSession)
+CONNECTION_LIMIT_KEY = web.AppKey("connection_limit", int)
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -129,7 +130,9 @@ async def proxy(request: web.Request) -> web.StreamResponse:
 
 async def _create_session(app: web.Application) -> None:
     app[SESSION_KEY] = ClientSession(
-        timeout=ClientTimeout(total=None, connect=30), auto_decompress=False
+        timeout=ClientTimeout(total=None, connect=30),
+        auto_decompress=False,
+        connector=TCPConnector(limit=app[CONNECTION_LIMIT_KEY]),
     )
 
 
@@ -137,10 +140,13 @@ async def _close_session(app: web.Application) -> None:
     await app[SESSION_KEY].close()
 
 
-def create_app(engine: HintEngine, upstream: str) -> web.Application:
+def create_app(
+    engine: HintEngine, upstream: str, *, connection_limit: int = 100
+) -> web.Application:
     app = web.Application(client_max_size=16 * 1024 * 1024)
     app[ENGINE_KEY] = engine
     app[UPSTREAM_KEY] = upstream.rstrip("/")
+    app[CONNECTION_LIMIT_KEY] = connection_limit
     app.on_startup.append(_create_session)
     app.on_cleanup.append(_close_session)
     app.router.add_get("/healthz", health)

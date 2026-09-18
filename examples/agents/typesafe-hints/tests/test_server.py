@@ -21,7 +21,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from typesafe_agent_hints.policy import HintDecision
-from typesafe_agent_hints.server import create_app
+from typesafe_agent_hints.server import SESSION_KEY, create_app
 
 pytestmark = [
     pytest.mark.pre_merge,
@@ -42,6 +42,17 @@ class FakeEngine:
             },
             {"test": True},
         )
+
+
+@pytest.mark.parametrize("connection_limit", [0, 100])
+async def test_connection_limit_is_applied_and_session_is_closed(connection_limit):
+    app = create_app(
+        FakeEngine(), "http://unused.invalid", connection_limit=connection_limit
+    )
+    async with TestClient(TestServer(app)):
+        session = app[SESSION_KEY]
+        assert session.connector.limit == connection_limit
+    assert session.closed
 
 
 @pytest.mark.asyncio

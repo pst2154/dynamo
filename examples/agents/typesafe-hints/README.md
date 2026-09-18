@@ -7,10 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 Experimental proxy that uses TypeSafe System One to infer NVIDIA Dynamo
 `nvext.agent_hints` for chat completions. No Dynamo core changes are required.
-The [validation report](REPORT.md) records the H100 experiment, evidence, and limitations.
-In the controlled synthetic benchmark, online hints reduced urgent TTFT under
-contention by 34.8%, but increased overall latency and reduced achieved throughput.
-Static application hints performed better. See the [benchmark protocol](BENCHMARK.md).
+The [validation report](REPORT.md) includes a Qwen3-32B-FP8 rerun on a
+scheduler-classified B300 PCIe GPU, without an artificial concurrency cap.
+At 192 requests with cache reset between arms, online hints reduced urgent mean
+TTFT by 24.0%, but increased overall latency by 14.4% and reduced output rate
+by 6.9%. Static hints had lower mean urgent TTFT; low-load TypeSafe was slower.
+These are exploratory synthetic results, not a general speedup. See the
+[benchmark protocol](BENCHMARK.md) and report for controls and failed runs.
 
 ## Run Against an Existing Dynamo Endpoint
 
@@ -46,7 +49,9 @@ a fallback response fails verification. Successful output contains
 
 Use Linux, Bash 4.3+, Docker with NVIDIA GPU support, an exclusively assigned GPU,
 and internet access for the image, Python dependencies, model, and TypeSafe API.
-The validated hardware was one H100 80 GB. Other GPU families have not been tested.
+The historical small-model experiment used an H100 80 GB; the 32B rerun used
+a scheduler-classified B300 PCIe allocation. See the report for exact device
+identity and separate H100 startup failures during the larger-model attempt.
 
 From the repository root, with `TYPESAFE_API_KEY` exported:
 
@@ -66,7 +71,7 @@ SGLang worker, and proxy, and exits if any child exits. Wait until the frontend'
 alone does not prove model readiness.
 
 On a Slurm cluster such as Computelab, run this only inside a GPU allocation.
-Select an available H100 partition and account using your site's scheduler
+Select a suitable available GPU partition and account using your site's scheduler
 instructions; do not run the image pull or model server on a login node.
 Use the same Docker command in the allocated compute shell with the checkout
 available on that node. Do not use `--gpus all` on a shared node unless the site
@@ -87,9 +92,16 @@ reserve GPUs or encode private partition/account names.
 | `PORT` / `--port` | `8001` | Proxy port |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
-The launcher also accepts `MODEL`, `DYN_HTTP_PORT`, `DYN_SYSTEM_PORT`,
-`HF_HOME`, optional `MAX_RUNNING_REQUESTS`, and the shared SGLang GPU-memory overrides. Defaults are the tested
+The launcher also accepts `MODEL`, `MODEL_PATH`, `LOG_DIR`, `DYN_HTTP_PORT`, `DYN_SYSTEM_PORT`,
+`HF_HOME`, `DYN_FILE_KV`, optional `MAX_RUNNING_REQUESTS`, and the shared SGLang GPU-memory overrides. Defaults are the tested
 model, port 8000, port 8081, and an ephemeral model cache.
+`MODEL_PATH` can point to a pinned local snapshot while `MODEL` remains the served
+API name. `LOG_DIR` optionally saves separate frontend, worker, and proxy logs;
+otherwise logs go to standard output. See the
+[larger-model protocol](BENCHMARK.md#larger-model-rerun-protocol) for the 32B run
+without a worker concurrency override.
+Use a fresh `DYN_FILE_KV` directory shared by the worker and benchmark client when
+running the optional cache-reset control; never point it at a shared deployment.
 
 Only `POST /v1/chat/completions` is forwarded. Streaming response bytes are
 relayed without interpreting model output. Other endpoints are

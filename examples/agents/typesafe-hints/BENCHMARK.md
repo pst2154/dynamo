@@ -27,7 +27,8 @@ alternating the two possible orders. It tests whether applying hints helps beyon
 the backend-arrival timing change caused by evaluation itself.
 
 The static application knows which requests are urgent, which will continue,
-and the forced output length. It uses priority 10/0, strict priority 1/0, OSL 128,
+and the forced output length. It uses priority 10/0, strict priority 1/0, the exact
+output-token limit (128 originally, 256 in the larger-model rerun) for OSL,
 and speculation on the first turn of the multi-turn suite. It is a strong
 application-metadata baseline, not an inferred classifier.
 
@@ -37,7 +38,76 @@ end-to-end timing. A warm-up evaluation is excluded, but every measured request
 still incurs its own call. Errors or fallbacks invalidate the comparison; the
 runner preserves partial output and stops.
 
-## Workloads
+## Larger-Model Rerun Protocol
+
+The larger-model experiment uses `Qwen/Qwen3-32B-FP8`, pinned to revision
+`aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df`, on one scheduler-classified B300 PCIe
+GPU (146,687 MiB reported memory). Two H100 startup attempts encountered GPU-loss
+errors; see the [failure evidence](results/startup-failure-32b.json). Its 32.8 billion
+parameters make it a serving workload rather than the original plumbing-scale
+model. FP8 weight quantization is fixed across all arms; this experiment does
+not measure its accuracy relative to BF16.
+
+Inside the GPU container, download the pinned snapshot and launch from the
+example directory with `TYPESAFE_API_KEY` securely supplied:
+
+```bash
+export MODEL=Qwen/Qwen3-32B-FP8
+export MODEL_PATH
+MODEL_PATH=$(python3 -c 'from huggingface_hub import snapshot_download; print(snapshot_download("Qwen/Qwen3-32B-FP8", revision="aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df"))')
+export LOG_DIR=/tmp/typesafe-32b-logs
+bash deploy/launch.sh
+```
+
+After the frontend lists the model and the live verification passes, a separate
+shell with the example installed can run the entire matrix:
+
+```bash
+MODEL=Qwen/Qwen3-32B-FP8 RESULT_DIR=/tmp/typesafe-32b-results \
+  LOG_DIR=/tmp/typesafe-32b-logs bash deploy/run_benchmark_sweep.sh
+```
+
+The sweep refuses to overwrite existing raw results, stops on a failed arm,
+and writes per-load analysis and queue evidence after each completed comparison.
+
+Do not set `MAX_RUNNING_REQUESTS` or a GPU-memory override. Record the automatic
+worker capacity from startup logs. Run six counterbalanced repetitions of each
+three-arm comparison with 256 generated tokens and 160 synthetic padding lines
+(approximately 2,000 input tokens). Sweep contention bursts of 8, 32, 128,
+and 256 requests. The fourth level was specified before measurements because
+the replacement GPU has more memory than the H100. Run low-load and two-turn
+suites with eight sessions separately.
+These are synthetic load points, not a production traffic distribution.
+
+At every burst size, background arrivals are spaced 5 ms apart. Urgent requests
+start after the background arrivals, or at 150 ms, whichever is later, also
+spaced 5 ms apart. Both benchmark HTTP connection pools are unlimited, preventing
+the default 100-connection pool from silently capping the larger load point.
+The proxy's normal non-benchmark connection limit remains 100.
+
+```bash
+for count in 8 32 128 256; do
+  python -m typesafe_agent_hints.benchmark \
+    --model Qwen/Qwen3-32B-FP8 --suite contention --rounds 6 \
+    --requests "$count" --tokens 256 --padding-lines 160 \
+    --output "/tmp/benchmark-32b-burst-$count.json"
+done
+for suite in low_load multi_turn; do
+  python -m typesafe_agent_hints.benchmark \
+    --model Qwen/Qwen3-32B-FP8 --suite "$suite" --rounds 6 \
+    --sessions 8 --tokens 256 --padding-lines 160 \
+    --output "/tmp/benchmark-32b-$suite.json"
+done
+```
+
+Analyze each file separately with `typesafe_agent_hints.analyze_benchmark` and
+collect queue telemetry. A load point without a queue cannot demonstrate
+priority scheduling under contention; report that result without manufacturing
+a queue by restoring the four-request cap. Timing includes online inference.
+Do not compare absolute throughput across the old and new model as a treatment
+effect: model size, precision, input length, and output budget have changed.
+
+## Original Microbenchmark Workloads
 
 - **Low load:** Eight sequential requests per arm, six background and two urgent.
   No queue is intentionally created. This measures the overhead floor.
@@ -60,10 +130,48 @@ The exact same initial payloads are used across arms within a repetition; hashes
 are saved and checked by the analyzer. Requests are synthetically generated and
 their class cues are explicit. This is not a held-out real agent trace.
 
-The KV cache is not flushed between arms. Rotation balances order effects, but
-the two-turn suite is a warm-cache experiment and cannot establish cold-cache
-benefit. Follow-up input includes model output, which can vary despite a fixed
+The KV cache is not flushed between arms. Rotation counterbalances immediate
+order, but persistent cache contents and eviction priorities can carry over
+between arms and load points. In particular, warming each input does not
+guarantee all warmed prefixes remain resident under memory pressure. These
+warm-cache experiments cannot establish cold-cache benefit or isolate cache
+eviction from queue priority. Follow-up input includes model output, which can vary despite a fixed
 seed; per-request message/output hashes support auditing this difference.
+
+### Follow-Up Cache-Reset Control
+
+The 32B sweep exposed a large first-arm effect at 128 requests, and the
+256-request run stopped on TypeSafe fallback. Consequently, a separate diagnostic
+control was specified at 128 and 192 requests, with six counterbalanced
+repetitions. This is an exploratory follow-up, not a pre-specified extension of
+the original sweep. The intermediate load is below the failing 256-request
+burst; worker capacity and the hint policy remain unchanged.
+
+Before every arm, `--cache-reset-endpoint dynamo.backend.clear_kv_blocks` invokes
+Dynamo's supported worker RPC in a separate client process and requires a
+positive acknowledgment. It refuses discovery sets with more than one worker.
+The reset precedes the same per-input warm-up and is excluded from timing.
+This controls carryover between arms; it does not guarantee every warmed prefix
+fits in memory at higher loads or measure a fully cold-cache workload.
+
+Run the client inside the Dynamo image with `DYN_FILE_KV` set to the exact fresh
+directory used by the exclusive worker. The optional reset helper requires
+`ai-dynamo`; ordinary proxy use and CPU tests do not.
+
+```bash
+for count in 128 192; do
+  python -m typesafe_agent_hints.benchmark \
+    --model Qwen/Qwen3-32B-FP8 --suite contention --rounds 6 \
+    --requests "$count" --tokens 256 --padding-lines 160 \
+    --cache-reset-endpoint dynamo.backend.clear_kv_blocks \
+    --output "/tmp/benchmark-32b-reset-$count.json"
+done
+```
+
+Follow-up instrumentation also records sanitized evaluator exception types and
+HTTP status codes. It does not retry, change policy, increase deadlines, or hide
+fallbacks. The original failed 256-request artifact lacks those diagnostic fields
+and must not be assigned a specific error cause retrospectively.
 
 ## Measurements
 
@@ -115,8 +223,9 @@ python -m typesafe_agent_hints.analyze_benchmark /tmp/benchmark-ablation.json \
   --output /tmp/ablation-summary.json
 ```
 
-`--worker-max-running-requests` records the verified deployment setting; it does
-not change the server. Confirm the worker starts with
+`--worker-max-running-requests` records a deployment override; it does not change
+the server. Omit it for automatic capacity (recorded as JSON `null`). For the
+original microbenchmark only, confirm the worker starts with
 `--max-running-requests 4 --schedule-policy fcfs --enable-priority-scheduling`.
 Do not run against a shared production endpoint.
 

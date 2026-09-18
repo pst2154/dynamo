@@ -1,0 +1,185 @@
+{
+  "description": "Timestamp-window log samples per arm, including warm-up. Counts are evidence of activity, not time-weighted queue metrics or cache-hit measurements.",
+  "runs": [
+    {
+      "suite": "contention",
+      "repeat": 0,
+      "mode": "none",
+      "queue_samples": 233,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 0,
+      "mode": "static",
+      "queue_samples": 234,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 0,
+      "mode": "typesafe",
+      "queue_samples": 226,
+      "positive_queue_samples": 12,
+      "max_queue_requests": 21,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 1,
+      "mode": "none",
+      "queue_samples": 234,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 1,
+      "mode": "typesafe",
+      "queue_samples": 229,
+      "positive_queue_samples": 12,
+      "max_queue_requests": 21,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 1,
+      "mode": "static",
+      "queue_samples": 234,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 2,
+      "mode": "static",
+      "queue_samples": 237,
+      "positive_queue_samples": 16,
+      "max_queue_requests": 25,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 2,
+      "mode": "none",
+      "queue_samples": 234,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 2,
+      "mode": "typesafe",
+      "queue_samples": 227,
+      "positive_queue_samples": 12,
+      "max_queue_requests": 20,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 3,
+      "mode": "static",
+      "queue_samples": 235,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 3,
+      "mode": "typesafe",
+      "queue_samples": 226,
+      "positive_queue_samples": 13,
+      "max_queue_requests": 21,
+      "max_running_requests": 182,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 3,
+      "mode": "none",
+      "queue_samples": 237,
+      "positive_queue_samples": 16,
+      "max_queue_requests": 32,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 4,
+      "mode": "typesafe",
+      "queue_samples": 225,
+      "positive_queue_samples": 12,
+      "max_queue_requests": 20,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 4,
+      "mode": "none",
+      "queue_samples": 232,
+      "positive_queue_samples": 12,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 4,
+      "mode": "static",
+      "queue_samples": 234,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 5,
+      "mode": "typesafe",
+      "queue_samples": 229,
+      "positive_queue_samples": 14,
+      "max_queue_requests": 19,
+      "max_running_requests": 185,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 5,
+      "mode": "static",
+      "queue_samples": 234,
+      "positive_queue_samples": 15,
+      "max_queue_requests": 22,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    },
+    {
+      "suite": "contention",
+      "repeat": 5,
+      "mode": "none",
+      "queue_samples": 237,
+      "positive_queue_samples": 16,
+      "max_queue_requests": 31,
+      "max_running_requests": 189,
+      "speculative_prefill_events": 0
+    }
+  ]
+}

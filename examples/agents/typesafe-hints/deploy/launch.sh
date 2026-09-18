@@ -30,11 +30,21 @@ cleanup() {
 trap cleanup EXIT
 
 MODEL="${MODEL:-Qwen/Qwen3-0.6B}"
+MODEL_PATH="${MODEL_PATH:-$MODEL}"
+FRONTEND_LOG=/dev/stdout
+WORKER_LOG=/dev/stdout
+PROXY_LOG=/dev/stdout
+if [[ -n "${LOG_DIR:-}" ]]; then
+    mkdir -p "$LOG_DIR"
+    FRONTEND_LOG="$LOG_DIR/frontend.log"
+    WORKER_LOG="$LOG_DIR/worker.log"
+    PROXY_LOG="$LOG_DIR/proxy.log"
+fi
 export DYN_HTTP_PORT="${DYN_HTTP_PORT:-8000}"
 export DYN_SYSTEM_PORT="${DYN_SYSTEM_PORT:-8081}"
 RUNTIME_DIR="$(mktemp -d)"
 export HF_HOME="${HF_HOME:-$RUNTIME_DIR/huggingface}"
-export DYN_FILE_KV="$RUNTIME_DIR/discovery"
+export DYN_FILE_KV="${DYN_FILE_KV:-$RUNTIME_DIR/discovery}"
 mkdir -p "$DYN_FILE_KV"
 # Keep the image's Dynamo/backend dependencies; isolate proxy installation.
 python3 -m venv --system-site-packages "$RUNTIME_DIR/venv"
@@ -48,19 +58,19 @@ print_launch_banner "TypeSafe agent hints with SGLang" "$MODEL" "$DYN_HTTP_PORT"
 
 python3 -m dynamo.frontend --discovery-backend file \
     --router-mode kv --no-router-kv-events --router-track-output-blocks \
-    --http-port "$DYN_HTTP_PORT" &
+    --http-port "$DYN_HTTP_PORT" > "$FRONTEND_LOG" 2>&1 &
 CHILD_PIDS+=("$!")
 
 # GPU_MEM_ARGS intentionally expands into CLI flags from the shared helper.
 # shellcheck disable=SC2086
-python3 -m dynamo.sglang --model-path "$MODEL" --served-model-name "$MODEL" \
+python3 -m dynamo.sglang --model-path "$MODEL_PATH" --served-model-name "$MODEL" \
     --discovery-backend file --enable-priority-scheduling \
     --radix-eviction-policy priority --page-size 16 --tp 1 \
     --disable-piecewise-cuda-graph --schedule-policy fcfs \
-    "${CAPACITY_ARGS[@]}" $GPU_MEM_ARGS &
+    "${CAPACITY_ARGS[@]}" $GPU_MEM_ARGS > "$WORKER_LOG" 2>&1 &
 CHILD_PIDS+=("$!")
 
 "$RUNTIME_DIR/venv/bin/python" -m typesafe_agent_hints.server \
-    --upstream "http://127.0.0.1:$DYN_HTTP_PORT" &
+    --upstream "http://127.0.0.1:$DYN_HTTP_PORT" > "$PROXY_LOG" 2>&1 &
 CHILD_PIDS+=("$!")
 wait_any_exit

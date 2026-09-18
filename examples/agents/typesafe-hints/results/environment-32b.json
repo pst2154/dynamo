@@ -1,0 +1,61 @@
+{
+  "model": "Qwen/Qwen3-32B-FP8",
+  "model_revision": "aa55da1ecc13d006e8b8e4f54579b1ea8c3db2df",
+  "parameters": 32764027904,
+  "image": "nvcr.io/nvidia/ai-dynamo/sglang-runtime@sha256:3692c0c6a1ae23045f48384a09b539dcb9347ffa66ead5d0426aa90e85865012",
+  "gpu_scheduler_class": "B300 PCIe",
+  "gpu_reported_name": "NVIDIA Graphics Device",
+  "gpu_count": 1,
+  "gpu_memory_mib": 146687,
+  "driver": "610.57.04",
+  "packages": {
+    "ai-dynamo": "1.4.2",
+    "sglang": "0.5.16",
+    "torch": "2.11.0+cu130",
+    "aiohttp": "3.14.3",
+    "transformers": "5.12.1"
+  },
+  "worker": {
+    "tensor_parallel_size": 1,
+    "weight_quantization": "fp8_e4m3",
+    "weight_memory_gib_reported": 33.16,
+    "kv_cache_dtype": "bfloat16",
+    "allocated_kv_tokens": 392720,
+    "max_running_requests_override": null,
+    "max_running_requests_resolved": 4096,
+    "max_total_tokens_override": null,
+    "mem_fraction_static_resolved": 0.908,
+    "schedule_policy": "fcfs",
+    "enable_priority_scheduling": true,
+    "radix_eviction_policy": "priority",
+    "page_size": 16,
+    "disable_piecewise_cuda_graph": true,
+    "attention_backend": "trtllm_mha"
+  },
+  "frontend": {
+    "discovery_backend": "file",
+    "router_mode": "kv",
+    "router_kv_events": false,
+    "router_track_output_blocks": true
+  },
+  "benchmark_http_connection_limit": 0,
+  "main_sweep_deployed_source_sha256": {
+    "src/typesafe_agent_hints/benchmark.py": "dbed8d7b643fd08e9a0bccb8ac3818f60c1f857b4d935f683f6ae5f1648fb1c3",
+    "src/typesafe_agent_hints/server.py": "6c11d70d639bf36696ff247317ef1151599fd8aa33cbc2c3c77a24a6e2dc6b1a",
+    "src/typesafe_agent_hints/policy.py": "8c1243da23aaa93b5de66a4fb578fb661eafe9095a9b727a31adf7420c879404",
+    "src/typesafe_agent_hints/typesafe.py": "e1a24865187c2b8c0e2ac2dab365856ce7d100a3a24cfe0fa45b19d41ddf527e",
+    "deploy/launch.sh": "563360f96559a76613b60bb45492cddd9cae24458233a14abab8a3315d0f3745",
+    "deploy/run_benchmark_sweep.sh": "80bb32cf42a90c2933cf90a63168c7644bac199571c94fb41fac9949184cd45a"
+  },
+  "cache_reset_control_deployed_source_sha256": {
+    "src/typesafe_agent_hints/benchmark.py": "80c8b0cd8fafd1d8ec9cb0e5edf193aa3ff9c45f7f97dec3a8461ccf3a90e2a9",
+    "src/typesafe_agent_hints/reset_cache.py": "180d93e8e24c17c09da0df07c66d0b2764f1d87e5f3b337804e8905710216845"
+  },
+  "notes": [
+    "GPU classification is from the scheduler; nvidia-smi reports a generic device name. These measurements do not characterize every B300 SKU.",
+    "Main-sweep hashes describe the files deployed for that experiment. Optional cache-reset support, sanitized failure diagnostics, and a launcher discovery-directory override were added afterward; the hint policy and worker settings are unchanged.",
+    "Startup compilation and per-arm warmup are excluded from request timings.",
+    "Model, precision, token budgets, and worker configuration are fixed across hint variants.",
+    "The historical 0.6B experiment is not an apples-to-apples model-size comparison."
+  ]
+}
