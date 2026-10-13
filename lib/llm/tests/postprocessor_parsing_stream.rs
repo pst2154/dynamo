@@ -2150,6 +2150,90 @@ struct DrainOutput {
     finish_reasons: Vec<FinishReason>,
 }
 
+/// Opt-in replay of externally retained evidence. No prompts or model output
+/// are embedded in this test; expected calls are supplied independently.
+#[tokio::test]
+#[ignore = "requires NEMOTRON_REPLAY_RAW, NEMOTRON_REPLAY_REQUEST, and NEMOTRON_REPLAY_EXPECTED"]
+async fn nemotron_external_capture_replay() {
+    let read = |name| fs::read_to_string(std::env::var(name).expect(name)).unwrap();
+    let raw = read("NEMOTRON_REPLAY_RAW");
+    let raw = raw.strip_suffix("<|im_end|>").unwrap_or(&raw);
+    let request: NvCreateChatCompletionRequest =
+        serde_json::from_str(&read("NEMOTRON_REPLAY_REQUEST")).unwrap();
+    let expected: Value = serde_json::from_str(&read("NEMOTRON_REPLAY_EXPECTED")).unwrap();
+    for width in [1, 7, 64, 4096] {
+        let preprocessor = build_preprocessor(Some("nemotron_v3"), Some("qwen3_coder"));
+        let chars: Vec<char> = raw.chars().collect();
+        let mut chunks: Vec<_> = chars
+            .chunks(width)
+            .map(|part| mock_content_chunk(&part.iter().collect::<String>()))
+            .collect();
+        chunks.push(mock_final_chunk());
+        chunks.push(mock_usage_only_chunk());
+        let output = preprocessor
+            .postprocessor_parsing_stream(
+                stream::iter(chunks.into_iter().map(Annotated::from_data)),
+                &request,
+                true,
+                false,
+            )
+            .unwrap();
+        let result = drain_stream(output).await;
+        let calls: Vec<_> = result
+            .tool_calls
+            .iter()
+            .map(|call| {
+                serde_json::json!({
+                    "name": call.name,
+                    "arguments": serde_json::from_str::<Value>(&call.arguments).unwrap(),
+                })
+            })
+            .collect();
+        assert_eq!(serde_json::json!(calls), expected, "chunk width {width}");
+        assert_eq!(result.finish_reasons, vec![FinishReason::ToolCalls]);
+        assert!(!result.reasoning.contains("<tool_call>"));
+    }
+}
+
+/// A complete Nemotron tool span held until EOF must reach the tool jail even
+/// without force_nonempty_content. Test the full public postprocessor chain.
+#[tokio::test]
+async fn nemotron_missing_think_close_flushes_calls_without_force_nonempty() {
+    let call = "<tool_call><function=get_weather><parameter=location>San Francisco</parameter></function></tool_call>";
+    for alias in ["nemotron3", "nemotron_v3"] {
+        for terminal in [false, true] {
+            for width in [1, 7, 4096] {
+                let preprocessor = build_preprocessor(Some(alias), Some("qwen3_coder"));
+                let request = streaming_tool_request(ChatCompletionToolChoiceOption::Auto);
+                let text = format!("Inspect the weather.{call}");
+                let mut chunks: Vec<_> = text
+                    .as_bytes()
+                    .chunks(width)
+                    .map(|part| mock_content_chunk(std::str::from_utf8(part).unwrap()))
+                    .collect();
+                if terminal {
+                    chunks.push(mock_final_chunk());
+                }
+                chunks.push(mock_usage_only_chunk());
+                let output = preprocessor
+                    .postprocessor_parsing_stream(
+                        stream::iter(chunks.into_iter().map(Annotated::from_data)),
+                        &request,
+                        true,
+                        false,
+                    )
+                    .unwrap();
+                let result = drain_stream(output).await;
+                assert_eq!(result.reasoning, "Inspect the weather.");
+                assert_clean_tool_call(alias, &result.content, &result.tool_calls, "San Francisco");
+                if terminal {
+                    assert_eq!(result.finish_reasons, vec![FinishReason::ToolCalls]);
+                }
+            }
+        }
+    }
+}
+
 async fn drain_stream(
     output_stream: impl futures::Stream<Item = Annotated<NvCreateChatCompletionStreamResponse>>,
 ) -> DrainOutput {
